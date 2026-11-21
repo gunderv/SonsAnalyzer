@@ -65,9 +65,19 @@ Restart the server, then open **Data Browser**. Check that these paths are updat
 | `navigation.headingTrue` (or `headingMagnetic` + `magneticVariation`) | compass | true wind, maneuvers |
 | `environment.wind.angleApparent`, `environment.wind.speedApparent` | masthead unit | true wind |
 | `environment.wind.angleTrueWater`, `environment.wind.speedTrue`, `environment.wind.directionTrue` | instrument processor | **everything** |
-| `navigation.attitude` | heel/pitch sensor | heel |
+| `navigation.attitude` | heel/pitch sensor | heel, motoring detection |
+| `propulsion.<id>.revolutions` | engine (PGN 127488, Engine Rapid) | **motoring detection** (recommended) |
 | `steering.rudderAngle` | rudder sensor | optional |
 | `environment.depth.belowTransducer` | depth | optional |
+
+**Engine RPM** is worth getting onto the bus. The log runs all the time, so it also records
+motoring out, the pre-start and motoring home. With engine RPM, SonsAnalyzer leaves every
+second under engine out of the analysis, exactly. Modern engines with an NMEA 2000 or J1939
+interface (Volvo Penta EVC, Yanmar with gateway, …) send it already. Older engines can use a
+small gateway that counts alternator W-terminal or tacho pulses (e.g. Yacht Devices Engine
+Gateway). Without it, motoring is inferred from boat movement: pointing too close to the wind,
+going faster than the polar, or no heel in a breeze. That works well, except for motoring
+downwind at sailing speed, which can't be told apart from sailing.
 
 ## 4. True wind
 
@@ -175,11 +185,17 @@ background.
 
 ## 10. Race-day routine
 
-1. Power on, check the Live page shows data and the right time.
-2. Before the start: sail past the pin, press **Ping PIN end**. Sail past the committee boat,
-   press **Ping COMMITTEE BOAT**. The Live page then shows the distance to the line.
-3. After racing: on the Races page, pick the session, name the race, and set the **start gun
-   time**. The rest is automatic: legs, tacks and gybes, wind bands and start analysis.
+1. Power on before leaving the dock, and check the Live page shows data and the right time.
+   Then just race. Nothing needs to be pressed on board.
+2. Afterwards, on the Races page, press **Find races** next to the day's sailing session.
+   Each race found becomes a race entry. The start gun and finish are estimated from the
+   data, and motoring, the pre-start and everything after the finish are left out.
+3. Open each race and check the **start gun time** at the top. If it is wrong, use
+   **−1 min / +1 min** or type the exact time under Race settings, then **Confirm**. This can
+   be done any time later.
+
+Optional: to get distance to the line and line bias in the start analysis, ping both ends on
+the Live page before the start, or type in the line positions under Race settings.
 
 ## Troubleshooting
 

@@ -60,6 +60,7 @@ def test_fetch_roundtrip(race):
         err = (got[col].to_numpy() - part[col].to_numpy() + 180) % 360 - 180
         assert np.abs(err).max() < 1e-6, col
     assert np.allclose(got["lat"], part["lat"]) and np.allclose(got["lon"], part["lon"])
+    assert np.allclose(got["engine_rpm"], part["engine_rpm"])  # propulsion.main.revolutions (Hz)
     # queries are time-bounded and grouped
     assert any("GROUP BY time(1s)" in q for q in client.queries)
 

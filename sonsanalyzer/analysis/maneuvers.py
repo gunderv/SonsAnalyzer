@@ -37,6 +37,7 @@ def detect(df: pd.DataFrame, acfg: dict) -> list[dict]:
     n = len(df)
     if n < 60:
         return []
+    motoring = df["motoring"].to_numpy(dtype=bool) if "motoring" in df else None
 
     sign = np.sign(twa)
     flips = np.where((sign[1:] * sign[:-1]) < 0)[0] + 1
@@ -67,6 +68,8 @@ def detect(df: pd.DataFrame, acfg: dict) -> list[dict]:
             continue
         if np.nanmedian(bsp[pre]) < 2.0:
             continue  # pre-start / drifting
+        if motoring is not None and motoring[max(0, i - 25):min(n, i + 30)].any():
+            continue  # turning under engine is not a maneuver
         events.append(_measure(df, i, kind, pre_med, post_med, turn, before, after))
         last_t = i
     return [e for e in events if e is not None]

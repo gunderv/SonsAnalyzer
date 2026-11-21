@@ -33,3 +33,6 @@ maneuver_window_after_s = 30
 session_min_sog_kn = 2.0
 session_min_minutes = 15
 session_max_gap_minutes = 10
+engine_rpm_min = 300       # engine above this = motoring (needs propulsion.*.revolutions)
+motoring_max_twa = 28      # without engine data: moving this close to the wind = motoring
+min_race_minutes = 15      # shortest stretch of racing that counts as a race

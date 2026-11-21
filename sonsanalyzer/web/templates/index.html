@@ -19,13 +19,15 @@
 <div class="grid2">
   <div class="panel">
     <h2>Sailing sessions <span class="muted" style="font-weight:400">(found automatically from the log)</span></h2>
+    <p class="muted" style="font-size:.85rem;margin-top:-.4rem"><b>Find races</b> looks for racing inside a session and creates
+      a race for each one, with start gun and finish estimated from the data and motoring left out. Check the gun time on the race page.</p>
     <div class="row" style="margin-bottom:.5rem">
       <label style="flex-direction:row;align-items:center;gap:.4rem">Last
         <select id="days"><option>7</option><option selected>30</option><option>90</option><option>365</option></select> days</label>
     </div>
     <div class="table-wrap">
       <table id="sessions">
-        <thead><tr><th class="l">Start</th><th>Length</th><th>Avg SOG</th><th>Max SOG</th><th></th></tr></thead>
+        <thead><tr><th class="l">Start</th><th>Length</th><th>Avg SOG</th><th>Max SOG</th><th></th><th></th></tr></thead>
         <tbody><tr><td colspan="5" class="empty">Loading…</td></tr></tbody>
       </table>
     </div>
@@ -44,8 +46,8 @@
       <div class="row">
         <label>Start gun (optional)<input type="datetime-local" step="1" name="gun_time"></label>
       </div>
-      <p class="muted" style="font-size:.85rem;margin:.3rem 0 .8rem">Times are local. The start line comes from the
-        pin/boat pings on the Live page, or can be entered on the race page afterwards.</p>
+      <p class="muted" style="font-size:.85rem;margin:.3rem 0 .8rem">Times are local. The window may include motoring and the
+        pre-start: if the gun time is left empty it is estimated from the data, and can be confirmed or changed later.</p>
       <button class="primary" type="submit">Create race</button>
     </form>
   </div>
@@ -62,27 +64,40 @@ async function loadRaces() {
       <td class="l"><a href="/race/${r.id}"><b>${SA.esc(r.name)}</b></a></td>
       <td class="l">${SA.dateTime(r.start_time)}</td>
       <td>${SA.dur((new Date(r.end_time) - new Date(r.start_time)) / 1000)}</td>
-      <td class="l">${r.gun_time ? "Gun " + SA.time(r.gun_time) : '<span class="muted">no gun time</span>'}</td>
+      <td class="l">${r.gun_time ? "Gun " + SA.time(r.gun_time) : '<span class="chip est">gun estimated</span>'}</td>
       <td><a href="/race/${r.id}">Analyse →</a></td>
     </tr>`).join("");
 }
 async function loadSessions() {
   const tb = document.querySelector("#sessions tbody");
-  tb.innerHTML = `<tr><td colspan="5" class="empty">Loading…</td></tr>`;
+  tb.innerHTML = `<tr><td colspan="6" class="empty">Loading…</td></tr>`;
   try {
     const s = await SA.api("/api/sessions?days=" + document.getElementById("days").value);
-    if (!s.length) { tb.innerHTML = `<tr><td colspan="5" class="empty">No sailing found in this period.</td></tr>`; return; }
+    if (!s.length) { tb.innerHTML = `<tr><td colspan="6" class="empty">No sailing found in this period.</td></tr>`; return; }
     tb.innerHTML = s.map((x, i) => `
       <tr><td class="l">${SA.dateTime(x.start)}</td><td>${SA.dur(x.minutes * 60)}</td>
       <td>${SA.f(x.avg_sog, 1)} kn</td><td>${SA.f(x.max_sog, 1)} kn</td>
-      <td><button data-i="${i}">Use</button></td></tr>`).join("");
-    tb.querySelectorAll("button").forEach(b => b.onclick = () => {
+      <td><button class="primary" data-find="${i}">Find races</button></td>
+      <td><button data-i="${i}" title="Copy the session times into the New race form">Use</button></td></tr>`).join("");
+    tb.querySelectorAll("button[data-find]").forEach(b => b.onclick = async () => {
+      const x = s[b.dataset.find];
+      b.disabled = true; b.textContent = "Searching…";
+      try {
+        const r = await SA.api("/api/races/detect", { json: { start: x.start, end: x.end, create: true,
+          tz: Intl.DateTimeFormat().resolvedOptions().timeZone } });
+        if (!r.races.length) { SA.toast("No racing found in this session", 4000); b.disabled = false; b.textContent = "Find races"; return; }
+        SA.toast(`${r.races.length} race${r.races.length > 1 ? "s" : ""} created`);
+        if (r.races.length === 1) location.href = "/race/" + r.races[0].race_id; else loadRaces();
+      } catch (e) { SA.toast(e.message, 5000); }
+      b.disabled = false; b.textContent = "Find races";
+    });
+    tb.querySelectorAll("button[data-i]").forEach(b => b.onclick = () => {
       const x = s[b.dataset.i], f = document.getElementById("newrace");
       f.start_time.value = SA.toLocalInput(x.start);
       f.end_time.value = SA.toLocalInput(x.end);
       f.name.focus();
     });
-  } catch (e) { tb.innerHTML = `<tr><td colspan="5" class="empty">Could not read the log: ${SA.esc(e.message)}</td></tr>`; }
+  } catch (e) { tb.innerHTML = `<tr><td colspan="6" class="empty">Could not read the log: ${SA.esc(e.message)}</td></tr>`; }
 }
 document.getElementById("days").onchange = loadSessions;
 document.getElementById("newrace").onsubmit = async (ev) => {

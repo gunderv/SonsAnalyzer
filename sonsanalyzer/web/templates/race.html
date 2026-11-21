@@ -17,6 +17,7 @@
 <div id="error" class="panel empty" style="display:none"></div>
 
 <div id="content" style="display:none">
+  <div class="panel phasebar" id="phaseBar"></div>
   <div class="tiles" id="tiles" style="margin-bottom:1rem"></div>
 
   <div class="panel">
@@ -96,10 +97,13 @@
         <div class="row">
           <label>From<input type="datetime-local" step="1" name="start_time" required></label>
           <label>To<input type="datetime-local" step="1" name="end_time" required></label>
-          <label>Start gun<input type="datetime-local" step="1" name="gun_time"></label>
         </div>
-        <p class="muted" style="font-size:.85rem">Start line override. Leave empty to use the pin/boat pings from the Live page
-          (most recent before the gun), or a start line published by the instruments.</p>
+        <div class="row">
+          <label>Start gun (empty = estimate from data)<input type="datetime-local" step="1" name="gun_time"></label>
+          <label>Finish (empty = estimate from data)<input type="datetime-local" step="1" name="finish_time"></label>
+        </div>
+        <p class="muted" style="font-size:.85rem">Optional start line (pin and committee boat positions). Without it the Start tab
+          shows speed and gains at the gun but not distance to the line. Pings from the Live page are used if present.</p>
         <div class="row">
           <label>Pin end latitude<input name="pin_lat" inputmode="decimal"></label>
           <label>Pin end longitude<input name="pin_lon" inputmode="decimal"></label>

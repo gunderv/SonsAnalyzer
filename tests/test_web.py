@@ -40,6 +40,22 @@ def test_race_analysis_and_crud(client):
     assert client.delete(f"/api/races/{r['id']}").json()["ok"]
 
 
+def test_estimates_confirm_and_find_races(client):
+    races = sorted(client.get("/api/races").json(), key=lambda r: r["start_time"])
+    est = client.get(f"/api/races/{races[1]['id']}/analysis").json()  # demo race 2: no gun set
+    assert est["phases"]["gun_source"] == "estimated"
+    assert est["phases"]["motoring_s"] > 1500
+    assert est["start"]["has_line"] is False
+    # confirm the estimate
+    client.put(f"/api/races/{races[1]['id']}", json={"gun_time": est["phases"]["gun"]})
+    again = client.get(f"/api/races/{races[1]['id']}/analysis").json()
+    assert again["phases"]["gun_source"] == "set"
+    # find races in a session without creating
+    found = client.post("/api/races/detect", json={"start": races[2]["start_time"],
+                                                   "end": races[2]["end_time"]}).json()
+    assert len(found["races"]) == 1 and "race_id" not in found["races"][0]
+
+
 def test_live_ping_sessions_polar(client):
     assert client.get("/api/live").json()["ok"]
     p = client.post("/api/ping/pin", json={}).json()

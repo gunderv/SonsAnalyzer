@@ -4,30 +4,66 @@ from __future__ import annotations
 import numpy as np
 import pandas as pd
 
-from . import derive, legs as legs_mod, maneuvers as man_mod, start as start_mod
+from . import derive, legs as legs_mod, maneuvers as man_mod, phases, start as start_mod
 
 WIND_BANDS = [0, 6, 9, 12, 16, 50]
 WIND_LABELS = ["<6", "6-9", "9-12", "12-16", "16+"]
 
 TRACK_COLUMNS = ["lat", "lon", "bsp", "sog", "cog", "hdg", "tws", "twd", "twa", "aws", "awa",
                  "heel", "rudder", "vmg", "polar_pct", "vmg_pct", "target_bsp", "target_twa",
-                 "depth"]
+                 "depth", "engine_rpm"]
 
 
-def analyze_race(raw: pd.DataFrame, polar, acfg: dict, gun=None, line=None) -> dict:
+def _ts(t):
+    if t is None or t == "":
+        return None
+    t = pd.Timestamp(t)
+    return t.tz_localize("UTC") if t.tzinfo is None else t.tz_convert("UTC")
+
+
+def analyze_race(raw: pd.DataFrame, polar, acfg: dict, gun=None, finish=None, line=None) -> dict:
+    """Analyse one race window.
+
+    gun / finish: times set by the crew. When missing they are estimated from the data
+    (see phases.py). Only the part between gun and finish, and not motoring, counts towards
+    the summary, legs, wind bands and maneuver averages.
+    """
     df = derive.enrich(raw, polar, acfg)
+    est = phases.pick_race(phases.find_races(df, acfg), df.index[0], df.index[-1])
+    gun_ts, finish_ts = _ts(gun), _ts(finish)
+    info = {
+        "gun": gun_ts or (est["gun"] if est else None),
+        "gun_source": "set" if gun_ts else ("estimated" if est else None),
+        "finish": finish_ts or (est["finish"] if est else None),
+        "finish_source": "set" if finish_ts else ("estimated" if est else None),
+        "estimated_gun": est["gun"] if est else None,
+        "estimated_finish": est["finish"] if est else None,
+        "motoring_source": df.attrs.get("motoring_source"),
+        "motoring_s": int(df["motoring"].sum()),
+    }
+    g = info["gun"] or df.index[0]
+    f = info["finish"] or df.index[-1]
+    phase = np.where(df.index < g, "pre", np.where(df.index > f, "post", "race"))
+    df["phase"] = phase
+    racing = df[(df["phase"] == "race") & ~df["motoring"]]
+
     mans = man_mod.detect(df, acfg)
     for m in mans:
-        m["prestart"] = bool(gun is not None and m["time"] < pd.Timestamp(gun))
-    racing_mans = [m for m in mans if not m["prestart"]]
-    legs = legs_mod.segment(df, int(acfg.get("min_leg_s", 90)))
+        m["phase"] = "pre" if m["time"] < g else "post" if m["time"] > f else "race"
+        m["prestart"] = m["phase"] != "race"  # shown greyed / hidden by default
+    racing_mans = [m for m in mans if m["phase"] == "race"]
+
+    race_df = df.loc[g:f]
+    legs = legs_mod.segment(race_df, int(acfg.get("min_leg_s", 90)))
     start = None
-    if gun is not None and line and line.get("pin") and line.get("boat"):
-        start = start_mod.analyze(df, pd.Timestamp(gun), tuple(line["pin"]), tuple(line["boat"]), polar)
-    racing = df.loc[pd.Timestamp(gun):] if gun is not None else df
+    if info["gun"] is not None:
+        pin = tuple(line["pin"]) if line and line.get("pin") else None
+        boat = tuple(line["boat"]) if line and line.get("boat") else None
+        start = start_mod.analyze(df, info["gun"], pin, boat, polar)
     return {
+        "phases": info,
         "summary": summary(racing),
-        "legs": legs_mod.leg_stats(df, legs, racing_mans),
+        "legs": legs_mod.leg_stats(race_df, legs, racing_mans),
         "maneuvers": [_jsonable(m) for m in mans],
         "maneuver_summary": man_mod.summarize(racing_mans),
         "bands": wind_bands(racing),
@@ -89,6 +125,8 @@ def track_payload(df: pd.DataFrame, max_points: int = 20000) -> dict:
             vals = d[c].astype(float).round(5 if c in ("lat", "lon") else 2)
             out[c] = [None if pd.isna(v) else v for v in vals.tolist()]
     out["mode"] = [m if isinstance(m, str) else None for m in d["mode"].tolist()]
+    if "phase" in d:
+        out["phase"] = d["phase"].tolist()
     return out
 
 

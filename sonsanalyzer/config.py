@@ -30,6 +30,9 @@ DEFAULTS: dict = {
         "session_min_sog_kn": 2.0,
         "session_min_minutes": 15,
         "session_max_gap_minutes": 10,
+        "engine_rpm_min": 300,
+        "motoring_max_twa": 28,
+        "min_race_minutes": 15,
     },
 }
 

@@ -67,6 +67,12 @@ class State:
 
         return InfluxSource(self.cfg)
 
+    def forget(self, race_id: int) -> None:
+        """Drop cached analyses of a race (its settings changed)."""
+        with self._lock:
+            for key in [k for k in self._cache if k[0] == race_id]:
+                del self._cache[key]
+
     def polar_version(self) -> float:
         p = self.data_dir / "polar.json"
         return p.stat().st_mtime if p.is_file() else 0.0
@@ -162,6 +168,32 @@ def api_sessions(days: int = 30):
                                     a["session_max_gap_minutes"])
 
 
+@app.post("/api/races/detect")
+def api_detect_races(data: dict = Body(...)):
+    """Find races (gun/finish estimates) in a time window, e.g. a sailing session.
+    With "create": true they are also saved as races (gun/finish left empty = estimated)."""
+    from ..analysis import derive, phases
+
+    s = S()
+    start, end = parse_time(data["start"]), parse_time(data["end"])
+    raw = s.source.fetch(start, end)
+    if raw.empty:
+        raise HTTPException(404, "No boat data in this time window")
+    df = derive.enrich(raw, s.polar, s.cfg["analysis"])
+    found = phases.find_races(df, s.cfg["analysis"])
+    out = []
+    for n, r in enumerate(found, 1):
+        item = {k: r[k] for k in ("gun", "finish", "window_start", "window_end", "duration_s")}
+        if data.get("create"):
+            local = r["gun"].tz_convert(data.get("tz") or "UTC") if data.get("tz") else r["gun"]
+            name = f"Race {local:%d.%m.%Y %H:%M}" + (f" #{n}" if len(found) > 1 else "")
+            rid = s.store.create_race({"name": name, "start_time": r["window_start"].to_pydatetime(),
+                                       "end_time": r["window_end"].to_pydatetime()})
+            item["race_id"] = rid
+        out.append(item)
+    return clean({"races": out, "motoring_source": df.attrs.get("motoring_source")})
+
+
 @app.get("/api/races")
 def api_races():
     return S().store.list_races()
@@ -182,12 +214,14 @@ def api_update_race(race_id: int, data: dict = Body(...)):
     if not s.store.get_race(race_id):
         raise HTTPException(404)
     s.store.update_race(race_id, data)
+    s.forget(race_id)
     return s.store.get_race(race_id)
 
 
 @app.delete("/api/races/{race_id}")
 def api_delete_race(race_id: int):
     S().store.delete_race(race_id)
+    S().forget(race_id)
     return {"ok": True}
 
 
@@ -228,7 +262,8 @@ def api_analysis(race_id: int):
         raise HTTPException(404, "No boat data in this time window")
     line = resolve_line(race)
     gun = parse_time(race["gun_time"]) if race.get("gun_time") else None
-    result = report.analyze_race(raw, s.polar, s.cfg["analysis"], gun=gun, line=line)
+    finish = parse_time(race["finish_time"]) if race.get("finish_time") else None
+    result = report.analyze_race(raw, s.polar, s.cfg["analysis"], gun=gun, finish=finish, line=line)
     result["race"] = race
     result["line_source"] = line["source"] if line else None
     result["has_polar"] = s.polar is not None
@@ -300,7 +335,7 @@ def api_live():
     out = {"ok": True, "time": d.index[-1].isoformat()}
     for c in ("lat", "lon", "bsp", "sog", "cog", "hdg", "tws", "twd", "twa", "aws", "awa", "heel",
               "vmg", "polar_pct", "vmg_pct", "target_bsp", "target_twa", "target_vmg",
-              "target_vmg_bsp", "depth"):
+              "target_vmg_bsp", "depth", "engine_rpm"):
         out[c] = last.get(c)
     out["mode"] = last.get("mode")
     out["age_s"] = (datetime.now(timezone.utc) - d.index[-1].to_pydatetime()).total_seconds()

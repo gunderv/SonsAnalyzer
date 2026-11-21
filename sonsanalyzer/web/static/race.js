@@ -24,8 +24,9 @@
     T = A.track;
     $("#loading").style.display = "none";
     $("#content").style.display = "block";
-    $("#subtitle").textContent = `${SA.dateTime(A.race.start_time)} – ${SA.time(A.race.end_time)}` +
-      (A.race.gun_time ? ` · Gun ${SA.time(A.race.gun_time)}` : "") + (A.has_polar ? "" : " · no polar loaded");
+    $("#subtitle").textContent = `Log window ${SA.dateTime(A.race.start_time)} – ${SA.time(A.race.end_time)}` +
+      (A.has_polar ? "" : " · no polar loaded");
+    renderPhases();
     renderTiles();
     initMap();
     initChart();
@@ -35,6 +36,46 @@
     renderStart();
     fillSettings();
     setIndex(0);
+  }
+
+  // ------------------------------------------------------------------ gun / finish
+  async function saveRace(fields) {
+    try {
+      await SA.api(`/api/races/${RACE_ID}`, { method: "PUT", json: fields });
+      location.reload();
+    } catch (e) { SA.toast(e.message); }
+  }
+  function shift(iso, minutes) { return new Date(new Date(iso).getTime() + minutes * 60000).toISOString(); }
+
+  function renderPhases() {
+    const P = A.phases || {};
+    const chip = (src) => src === "set" ? '<span class="chip set">set</span>'
+      : src === "estimated" ? '<span class="chip est" title="Estimated from the data">estimated</span>' : "";
+    const parts = [];
+    if (P.gun) {
+      const clearGun = P.gun_source === "set" && P.estimated_gun && P.estimated_gun !== P.gun
+        ? `<button data-clear="gun_time" title="Remove the set time and use the estimate (${SA.time(P.estimated_gun)})">Use estimate</button>` : "";
+      parts.push(`<div class="item"><span class="muted">Start gun</span> <b class="num">${SA.time(P.gun)}</b> ${chip(P.gun_source)}
+        <button data-gun="-1" title="One minute earlier">−1 min</button><button data-gun="1" title="One minute later">+1 min</button>
+        ${P.gun_source === "estimated" ? '<button class="primary" data-confirm="gun">Confirm</button>' : ""}${clearGun}</div>`);
+    } else {
+      parts.push(`<div class="item"><span class="muted">No race found in this window.</span> Set the gun time under Race settings.</div>`);
+    }
+    if (P.finish) {
+      parts.push(`<div class="item"><span class="muted">Finish</span> <b class="num">${SA.time(P.finish)}</b> ${chip(P.finish_source)}
+        ${P.finish_source === "estimated" ? '<button data-confirm="finish">Confirm</button>' : ""}
+        ${P.finish_source === "set" && P.estimated_finish ? '<button data-clear="finish_time">Use estimate</button>' : ""}</div>`);
+    }
+    if (P.motoring_s > 30) {
+      const how = P.motoring_source === "engine" ? "engine RPM" : "detected from boat movement";
+      parts.push(`<div class="item muted">${SA.dur(P.motoring_s)} under engine excluded (${how})</div>`);
+    }
+    const bar = $("#phaseBar");
+    bar.innerHTML = parts.join("");
+    bar.querySelectorAll("[data-gun]").forEach((b) => b.onclick = () => saveRace({ gun_time: shift(P.gun, +b.dataset.gun) }));
+    bar.querySelectorAll("[data-confirm]").forEach((b) => b.onclick = () =>
+      saveRace(b.dataset.confirm === "gun" ? { gun_time: P.gun } : { finish_time: P.finish }));
+    bar.querySelectorAll("[data-clear]").forEach((b) => b.onclick = () => saveRace({ [b.dataset.clear]: null }));
   }
 
   // ------------------------------------------------------------------ tiles
@@ -82,10 +123,14 @@
     return { fn, legend: [[`${SA.f(lo, 1)} kn`, SEQ[0]], ["", SEQ[2]], ["", SEQ[4]], [`${SA.f(hi, 1)} kn`, SEQ[6]]] };
   }
 
+  const OFF = "#9aa5b1";  // not racing: pre-start, after finish, motoring
+  const racingAt = (i) => (!T.phase || T.phase[i] === "race") && T.mode[i] !== "motoring";
   function drawTrack() {
     if (trackLayer) trackLayer.remove();
     trackLayer = L.layerGroup().addTo(map);
-    const { fn, legend } = colorFn($("#colorBy").value);
+    const base = colorFn($("#colorBy").value);
+    const fn = (i) => (racingAt(i) ? base.fn(i) : OFF);
+    const legend = [...base.legend, ["not racing", OFF]];
     let seg = [], col = null;
     const flush = () => { if (seg.length > 1) L.polyline(seg, { color: col, weight: 4, opacity: 0.95 }).addTo(trackLayer); };
     for (let i = 0; i < T.t.length; i++) {
@@ -104,7 +149,7 @@
         .addTo(trackLayer);
     });
     // start line
-    if (A.start && A.start.pin) {
+    if (A.start && A.start.has_line && A.start.pin) {
       L.polyline([A.start.pin, A.start.boat], { color: "#d6452c", weight: 3, dashArray: "6 6" }).addTo(trackLayer);
       L.circleMarker(A.start.pin, { radius: 5, color: "#d6452c", fillOpacity: 1 }).bindTooltip("Pin").addTo(trackLayer);
       L.circleMarker(A.start.boat, { radius: 5, color: "#d6452c", fillOpacity: 1 }).bindTooltip("Committee boat").addTo(trackLayer);
@@ -155,8 +200,10 @@
     if (T.lat[idx] != null) { boat.setLatLng([T.lat[idx], T.lon[idx]]); boat.setIcon(boatIcon(T.hdg[idx])); }
     const r = (label, v, unit = "", cls = "") => `<span>${label} <b class="${cls}">${v}</b>${unit}</span>`;
     const tws = T.tws[idx], twa = T.twa[idx];
+    const ph = T.phase ? T.phase[idx] : "race";
+    const label = T.mode[idx] === "motoring" ? "motoring" : ph === "pre" ? "pre-start" : ph === "post" ? "finished" : T.mode[idx];
     $("#readout").innerHTML = [
-      `<span class="chip ${T.mode[idx] || ""}">${T.mode[idx] || "–"}</span>`,
+      `<span class="chip ${racingAt(idx) ? T.mode[idx] || "" : ""}">${label || "–"}</span>`,
       r("BSP", SA.f(T.bsp[idx], 2), ` / ${SA.f(T.target_bsp[idx], 2)} kn`),
       r("SOG", SA.f(T.sog[idx], 2), " kn"),
       r("TWS", SA.f(tws, 1), " kn"), r("TWD", SA.f(T.twd[idx], 0), "°"),
@@ -269,7 +316,7 @@
     const th = cols.map(([k, l, c]) => `<th class="sortable ${c || ""}" data-k="${k}">${l}${manSort.key === k ? (manSort.dir > 0 ? " ▲" : " ▼") : ""}</th>`).join("");
     const lossCls = (v) => (v == null ? "" : v <= 8 ? "good" : v <= 15 ? "" : v <= 25 ? "warn" : "bad");
     const body = rows.map((m) => `<tr class="clickable" data-t="${m.time}">
-      <td class="l">${SA.time(m.time)}${m.prestart ? ' <span class="chip">pre</span>' : ""}</td><td class="l">${m.kind}</td><td class="l">${m.direction.replace("->", " → ")}</td>
+      <td class="l">${SA.time(m.time)}${m.prestart ? ` <span class="chip">${m.phase === "post" ? "after finish" : "pre-start"}</span>` : ""}</td><td class="l">${m.kind}</td><td class="l">${m.direction.replace("->", " → ")}</td>
       <td>${SA.f(m.tws, 1)}</td><td>${SA.f(m.entry_bsp, 2)}</td><td>${SA.f(m.min_bsp, 2)}</td><td>${SA.f(m.speed_drop_pct, 0)}</td>
       <td>${SA.f(m.entry_twa, 0)}</td><td>${SA.f(m.exit_twa, 0)}</td><td>${SA.f(m.turn_deg, 0)}</td>
       <td>${m.recover_s ?? "–"}</td><td class="${lossCls(m.loss_m)}"><b>${SA.f(m.loss_m, 1)}</b></td></tr>`).join("");
@@ -296,41 +343,59 @@
   function renderStart() {
     const box = $("#startBox");
     const s = A.start;
-    if (!A.race.gun_time) {
-      box.innerHTML = `<div class="empty">Set the start gun time under <b>Race settings</b> to analyse the start.</div>`; return;
-    }
     if (!s) {
-      box.innerHTML = `<div class="empty">No start line for this race. Ping the pin and committee boat ends on the
-        <a href="/live">Live page</a> before the start, or enter the coordinates under <b>Race settings</b>.</div>`; return;
+      box.innerHTML = `<div class="empty">No start gun time. Set it under <b>Race settings</b>, or check the log window covers the start.</div>`;
+      return;
     }
     if (s.error) { box.innerHTML = `<div class="empty">${SA.esc(s.error)}</div>`; return; }
-    const tile = (k, v, cls = "") => `<div class="tile"><div class="k">${k}</div><div class="v ${cls}">${v}</div></div>`;
-    const late = s.crossed_after_s;
-    box.innerHTML = `
-      <div class="tiles" style="margin-bottom:1rem">
+    const tile = (k, v, cls = "", title = "") =>
+      `<div class="tile" title="${title}"><div class="k">${k}</div><div class="v ${cls}">${v}</div></div>`;
+    const est = A.phases && A.phases.gun_source === "estimated";
+    const ttf = s.time_to_full_speed_s;
+    const fullSpeed = ttf == null ? "–" : ttf <= 0 ? `at gun <small>${-ttf} s before</small>` : `+${ttf} <small>s after gun</small>`;
+    let html = (est ? `<p class="muted" style="margin-top:0">Gun time is <b>estimated</b> (${SA.time(s.gun)}). Confirm or adjust it
+        at the top of the page. The start numbers depend on it.</p>` : "") +
+      `<div class="tiles" style="margin-bottom:1rem">
+        ${tile("Speed at gun", `${SA.f(s.bsp_at_gun, 1)} <small>/ ${SA.f(s.target_bsp, 1)} kn</small>`, SA.pctClass(s.pct_at_gun), "Boatspeed vs beat target speed")}
+        ${tile("% of target", `${SA.f(s.pct_at_gun, 0)}<small>%</small>`, SA.pctClass(s.pct_at_gun))}
+        ${tile("Full speed", fullSpeed, ttf == null ? "" : ttf <= 5 ? "good" : ttf <= 20 ? "" : "warn", "First time at 90 % of target speed for 10 s")}
+        ${tile("TWA at gun", `${SA.f(s.twa_at_gun, 0)}°`)}
+        ${tile("Gain 1 min", `${SA.f(s.gain_60s_m, 0)} <small>/ ${SA.f(s.ideal_60s_m, 0)} m</small>`, "", "Distance gained to windward in the first minute vs sailing at target VMG")}
+        ${tile("Gain 2 min", `${SA.f(s.gain_120s_m, 0)} <small>/ ${SA.f(s.ideal_120s_m, 0)} m</small>`, SA.pctClass(s.gain_120s_pct), "Distance gained to windward in the first two minutes vs sailing at target VMG")}
+        ${tile("TWS / TWD", `${SA.f(s.tws_at_gun, 1)} <small>kn ${SA.f(s.twd_at_gun, 0)}°</small>`)}
+      </div>`;
+    if (s.has_line) {
+      const late = s.crossed_after_s;
+      html += `<h2>Start line</h2><div class="tiles" style="margin-bottom:1rem">
         ${tile("At the gun", s.over_early ? "OVER" : `${SA.f(s.dist_at_gun_m, 0)} <small>m behind</small>`, s.over_early ? "bad" : s.dist_at_gun_m <= 10 ? "good" : s.dist_at_gun_m <= 30 ? "" : "warn")}
         ${tile("Crossed", late == null ? "–" : `+${SA.f(late, 0)} <small>s</small>`, late == null ? "" : late <= 3 ? "good" : late <= 10 ? "" : "warn")}
-        ${tile("Speed at gun", `${SA.f(s.bsp_at_gun, 1)} <small>/ ${SA.f(s.target_bsp, 1)} kn</small>`)}
-        ${tile("SOG at gun", `${SA.f(s.sog_at_gun, 1)} <small>kn</small>`)}
         ${tile("Position on line", `${SA.f(s.position_pct, 0)} <small>% from pin</small>`)}
         ${tile("Crossed at", `${SA.f(s.cross_position_pct, 0)} <small>% from pin</small>`)}
         ${tile("Line", `${SA.f(s.line_length_m, 0)} <small>m</small>`)}
         ${tile("Line bias", s.bias_deg == null ? "–" : `${SA.f(s.bias_deg, 0)}° <small>${s.favoured_end} end, ${SA.f(s.favoured_advantage_m, 0)} m</small>`)}
-      </div>
-      <div class="muted" style="font-size:.85rem;margin-bottom:.4rem">Distance to line (m, behind = positive) and speed, from 3 min before to 2 min after the gun.
-        Line source: ${SA.esc(A.line_source || "–")}. TWD at gun ${SA.f(s.twd_at_gun, 0)}°.</div>
-      <div id="startChart"></div>`;
+      </div>`;
+    } else {
+      html += `<p class="muted" style="font-size:.85rem">No start line positions, so distance to the line and line bias are not shown.
+        They can be added under Race settings if you have them.</p>`;
+    }
+    html += `<div class="muted" style="font-size:.85rem;margin-bottom:.4rem">Boatspeed, target speed and SOG from 3 min before to
+      3 min after the gun${s.has_line ? ", with distance to the line" : ""}.</div><div id="startChart"></div>`;
+    box.innerHTML = html;
+
     const S = s.series;
     const axisColor = SA.css("--muted"), grid = SA.css("--line");
-    new uPlot({
-      width: document.getElementById("startBox").clientWidth || 800, height: 240,
-      scales: { x: { time: false }, kn: {} },
-      axes: [{ stroke: axisColor, grid: { stroke: grid }, label: "seconds from gun" },
-             { stroke: axisColor, grid: { stroke: grid }, label: "m" },
-             { scale: "kn", side: 1, stroke: axisColor, grid: { show: false }, label: "kn" }],
-      series: [{}, { label: "Distance to line", stroke: "#d6452c", width: 2 },
-               { label: "SOG", stroke: "#3aa55d", scale: "kn" }, { label: "BSP", stroke: "#2b83c6", scale: "kn" }],
-    }, [S.t, S.dist_m, S.sog, S.bsp], document.getElementById("startChart"));
+    const series = [{}, { label: "BSP", stroke: "#2b83c6", width: 2, scale: "kn" },
+      { label: "Target", stroke: "#8a9aa8", dash: [6, 4], scale: "kn" }, { label: "SOG", stroke: "#3aa55d", scale: "kn" }];
+    const data = [S.t, S.bsp, S.target, S.sog];
+    const axes = [{ stroke: axisColor, grid: { stroke: grid }, label: "seconds from gun" },
+      { scale: "kn", stroke: axisColor, grid: { stroke: grid }, label: "kn" }];
+    if (s.has_line) {
+      series.push({ label: "Distance to line", stroke: "#d6452c", width: 2, scale: "m" });
+      data.push(S.dist_m);
+      axes.push({ scale: "m", side: 1, stroke: axisColor, grid: { show: false }, label: "m" });
+    }
+    new uPlot({ width: document.getElementById("startBox").clientWidth || 800, height: 240,
+      scales: { x: { time: false } }, axes, series }, data, document.getElementById("startChart"));
   }
 
   // ------------------------------------------------------------------ settings
@@ -340,6 +405,7 @@
     f.start_time.value = SA.toLocalInput(r.start_time);
     f.end_time.value = SA.toLocalInput(r.end_time);
     f.gun_time.value = SA.toLocalInput(r.gun_time);
+    f.finish_time.value = SA.toLocalInput(r.finish_time);
     ["pin_lat", "pin_lon", "boat_lat", "boat_lon"].forEach((k) => f[k].value = r[k] ?? "");
     f.notes.value = r.notes || "";
     f.onsubmit = async (e) => {
@@ -348,7 +414,7 @@
       try {
         await SA.api(`/api/races/${RACE_ID}`, { method: "PUT", json: {
           name: f.name.value, start_time: SA.fromLocalInput(f.start_time.value), end_time: SA.fromLocalInput(f.end_time.value),
-          gun_time: SA.fromLocalInput(f.gun_time.value), pin_lat: num(f.pin_lat.value), pin_lon: num(f.pin_lon.value),
+          gun_time: SA.fromLocalInput(f.gun_time.value), finish_time: SA.fromLocalInput(f.finish_time.value), pin_lat: num(f.pin_lat.value), pin_lon: num(f.pin_lon.value),
           boat_lat: num(f.boat_lat.value), boat_lon: num(f.boat_lon.value), notes: f.notes.value } });
         location.reload();
       } catch (err) { SA.toast(err.message); }

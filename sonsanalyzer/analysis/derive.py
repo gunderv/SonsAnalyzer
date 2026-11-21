@@ -11,6 +11,8 @@ Added columns:
   target_vmg    optimum VMG for current TWS
   vmg_pct       |vmg| / target_vmg * 100 (only upwind/downwind)
   twa_delta     |twa| - target_twa (positive = sailing lower/wider than target)
+  motoring      True while the engine is driving the boat (see detect_motoring)
+  mode          additionally 'motoring'
 """
 from __future__ import annotations
 
@@ -102,7 +104,7 @@ def add_xy(df: pd.DataFrame) -> pd.DataFrame:
 def enrich(raw: pd.DataFrame, polar: Polar | None, acfg: dict) -> pd.DataFrame:
     """Return a new DataFrame with cleaned + derived channels."""
     df = raw.copy()
-    for c in ("hdg_mag", "variation"):
+    for c in ("hdg_mag", "variation", "engine_rpm"):
         if c not in df:
             df[c] = np.nan
     df = fill_wind(df)
@@ -143,4 +145,70 @@ def enrich(raw: pd.DataFrame, polar: Polar | None, acfg: dict) -> pd.DataFrame:
         for c in ("target_bsp", "target_twa", "target_vmg", "target_vmg_bsp", "polar_pct",
                   "vmg_pct", "twa_delta"):
             df[c] = np.nan
+
+    motoring, source = detect_motoring(df, acfg)
+    df["motoring"] = motoring
+    df.attrs["motoring_source"] = source
+    df.loc[motoring, "mode"] = "motoring"
+    df.loc[motoring, ["polar_pct", "vmg_pct", "twa_delta"]] = np.nan
     return df
+
+
+def _clean_mask(mask: pd.Series, min_on_s: int, max_gap_s: int) -> pd.Series:
+    """Close gaps shorter than max_gap_s, then drop 'on' runs shorter than min_on_s."""
+    m = mask.to_numpy(dtype=bool).copy()
+
+    def runs(arr, value):
+        out, start = [], None
+        for i, v in enumerate(arr):
+            if v == value and start is None:
+                start = i
+            elif v != value and start is not None:
+                out.append((start, i))
+                start = None
+        if start is not None:
+            out.append((start, len(arr)))
+        return out
+
+    for a, b in runs(m, False):
+        if 0 < a and b < len(m) and b - a <= max_gap_s:
+            m[a:b] = True
+    for a, b in runs(m, True):
+        if b - a < min_on_s:
+            m[a:b] = False
+    return pd.Series(m, index=mask.index)
+
+
+def detect_motoring(df: pd.DataFrame, acfg: dict) -> tuple[pd.Series, str]:
+    """Return (mask, source). source is 'engine', 'heuristic' or 'none'.
+
+    With engine data: engine turning faster than `engine_rpm_min` = motoring. This is
+    reliable (racing rules don't allow the engine to drive the boat while racing).
+
+    Without engine data, motoring is inferred from things a sailing boat cannot do, held for
+    most of a minute:
+      * moving at speed while pointing higher than `motoring_max_twa` (~28 deg)
+      * going far faster than the polar (>130 %)
+      * no heel at all while reaching/beating in a breeze (only if heel is logged)
+    Motoring downwind at polar-like speed can't be told from sailing without engine data.
+    """
+    rpm = df["engine_rpm"]
+    if rpm.notna().mean() > 0.5:
+        m = (rpm > acfg.get("engine_rpm_min", 300)).fillna(False)
+        return _clean_mask(m, min_on_s=20, max_gap_s=20), "engine"
+
+    abs_twa = df["twa"].abs()
+    bsp = df["bsp"]
+    if bsp.isna().all():
+        return pd.Series(False, index=df.index), "none"
+    moving = bsp > 2.5
+    too_high = moving & (abs_twa < acfg.get("motoring_max_twa", 28))
+    too_fast = (bsp > 3) & (df["polar_pct"] > 130)
+    cand = too_high | too_fast
+    heel = df["heel"].abs()
+    if heel.notna().mean() > 0.5:
+        flat = (heel < 3) & (bsp > 4) & (df["tws"] > 8) & (abs_twa < 100)
+        cand = cand | flat
+    frac = cand.astype(float).rolling(60, center=True, min_periods=10).mean()
+    m = (frac > 0.7).fillna(False)
+    return _clean_mask(m, min_on_s=60, max_gap_s=30), "heuristic"

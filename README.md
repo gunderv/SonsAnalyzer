@@ -11,14 +11,28 @@ needed.
 
 | Page | Contents |
 |---|---|
-| **Races** | Sailing sessions found automatically in the log. Create a race from one (name, time window, start gun). |
-| **Race** | Track on the chart, coloured by polar %, VMG %, speed, wind or leg type. Replay with play/scrub, synced instrument charts, summary tiles. |
+| **Races** | Sailing sessions found automatically in the log. **Find races** detects the racing in a session and creates the races, or create one by hand. |
+| **Race** | Start gun and finish (estimated from the data, confirm or nudge ±1 min). Track on the chart, coloured by polar %, VMG %, speed, wind or leg type, with motoring, pre-start and after-finish greyed out. Replay, synced instrument charts, summary tiles. |
 | ↳ Legs | Automatic upwind/reach/downwind legs: time, distance, TWS/TWD, BSP, TWA vs target, polar %, VMG %, heel. |
 | ↳ Tacks & gybes | Every maneuver: entry/min speed, speed drop, in/out TWA, turn, recovery time and **metres lost**, with averages by wind band. Click to replay. |
 | ↳ Wind bands | Performance per wind band and point of sail. Shows where the boat is slow. |
-| ↳ Start | Distance to the line and speed at the gun, time to cross, position on the line, line bias and favoured end, plus a chart of the last 3 minutes. |
+| ↳ Start | Speed and TWA at the gun vs target, time to full speed, ground gained to windward in the first 1 and 2 minutes vs target VMG. With start line positions (optional) also distance to the line, time to cross, position on the line and line bias. |
 | **Polar** | The ORC polar, fetched from orc.org (or a CSV): diagram, beat/run targets, speed table. |
-| **Live** | Boatspeed vs target, polar %, VMG, target TWA, last maneuver loss. **Ping pin / committee boat** buttons for the start line. |
+| **Live** | Boatspeed vs target, polar %, VMG, target TWA, last maneuver loss, engine on/off. Optional start-line ping buttons. |
+
+### Only the racing is analysed
+
+The log runs continuously, so it also contains motoring, the pre-start and sailing home.
+These are left out automatically:
+
+- **Motoring:** engine RPM above 300 (`propulsion.*.revolutions`). Without engine data:
+  sustained pointing closer than 28° to the wind, speed above 130 % of the polar, or no heel
+  in a breeze.
+- **Race, gun and finish:** "racing" = under sail at ≥ 65 % of the beat/run target speed. A
+  race is at least 15 minutes of mostly racing. The gun is estimated as the first whole minute
+  at or after (start of full-speed sailing − 20 s). The finish is the last second of racing before
+  the boat stops racing for good. Both are marked *estimated* until the crew confirms or
+  changes them. Times set by the crew always win.
 
 ### How the numbers are computed
 
@@ -78,6 +92,7 @@ sonsanalyzer/
   analysis/maneuvers.py tack/gybe detection and loss
   analysis/start.py    start-line analysis
   analysis/sessions.py session detection
+  analysis/phases.py   race, gun and finish estimation
   analysis/report.py   puts it together for a race
   sim/simulator.py     windward/leeward race simulator
   web/                 FastAPI app, templates, JS (Leaflet + uPlot vendored for offline use)

@@ -8,17 +8,17 @@
 
 <div class="live-grid" id="grid" style="margin-bottom:1rem"></div>
 
-<div class="panel">
-  <h2>Start line</h2>
-  <p class="muted" style="margin-top:0;font-size:.9rem">Sail close to each end and press the button when you pass it. The boat's GPS position is stored.
-    The most recent pings before a race's gun time are used for its start analysis.</p>
+<details class="panel">
+  <summary><b>Start line pings</b> <span class="muted">(optional)</span></summary>
+  <p class="muted" style="font-size:.9rem">Only needed for distance-to-line and line bias in the start analysis. Sail close to each end and
+    press the button when you pass it. The boat's GPS position is stored, and the most recent pings before a race's gun time are used.</p>
   <div class="big-buttons">
     <button class="primary" id="pingPin">Ping PIN end</button>
     <button class="primary" id="pingBoat">Ping COMMITTEE BOAT</button>
   </div>
   <div id="lineInfo" class="readout" style="margin-top:.8rem"></div>
   <div class="table-wrap" style="margin-top:.8rem"><table id="pings"></table></div>
-</div>
+</details>
 
 <div class="panel" id="lastMan" style="display:none"></div>
 {% endblock %}
@@ -43,6 +43,7 @@ async function tick() {
     tile("TWS", SA.f(d.tws, 1), "kn"),
     tile("TWD", SA.f(d.twd, 0), "°"),
     tile("SOG / COG", SA.f(d.sog, 1), `kn ${SA.f(d.cog, 0)}°`),
+    ...(d.mode === "motoring" ? [tile("Engine", "ON", d.engine_rpm ? `${Math.round(d.engine_rpm)} rpm` : "", "warn")] : []),
     tile("Heel", SA.f(d.heel != null ? Math.abs(d.heel) : null, 0), "°"),
   ].join("");
   const li = document.getElementById("lineInfo");
