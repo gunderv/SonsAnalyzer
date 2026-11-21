@@ -1,0 +1,17 @@
+[Unit]
+Description=SonsAnalyzer sailing performance web app
+After=network.target influxdb.service
+Wants=influxdb.service
+
+[Service]
+Type=simple
+# Adjust user and paths to where the project was copied
+User=pi
+WorkingDirectory=/home/pi/SonsAnalyzer
+ExecStart=/home/pi/SonsAnalyzer/.venv/bin/python -m sonsanalyzer.web.app
+Restart=on-failure
+RestartSec=5
+Environment=PYTHONUNBUFFERED=1
+
+[Install]
+WantedBy=multi-user.target

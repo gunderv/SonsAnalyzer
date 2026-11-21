@@ -1,0 +1,74 @@
+{% extends "base.html" %}
+{% block title %}Live{% endblock %}
+{% block content %}
+<div class="row" style="justify-content:space-between;margin-bottom:.75rem">
+  <h1>Live</h1>
+  <span class="muted num" id="status">Connecting…</span>
+</div>
+
+<div class="live-grid" id="grid" style="margin-bottom:1rem"></div>
+
+<div class="panel">
+  <h2>Start line</h2>
+  <p class="muted" style="margin-top:0;font-size:.9rem">Sail close to each end and press the button when you pass it. The boat's GPS position is stored.
+    The most recent pings before a race's gun time are used for its start analysis.</p>
+  <div class="big-buttons">
+    <button class="primary" id="pingPin">Ping PIN end</button>
+    <button class="primary" id="pingBoat">Ping COMMITTEE BOAT</button>
+  </div>
+  <div id="lineInfo" class="readout" style="margin-top:.8rem"></div>
+  <div class="table-wrap" style="margin-top:.8rem"><table id="pings"></table></div>
+</div>
+
+<div class="panel" id="lastMan" style="display:none"></div>
+{% endblock %}
+{% block scripts %}
+<script>
+const tile = (k, v, unit = "", cls = "") => `<div class="tile"><div class="k">${k}</div><div class="v ${cls}">${v}<small> ${unit}</small></div></div>`;
+async function tick() {
+  let d;
+  try { d = await SA.api("/api/live"); } catch (e) { document.getElementById("status").textContent = "Error: " + e.message; return; }
+  if (!d.ok) { document.getElementById("status").textContent = d.message || "No data"; return; }
+  document.getElementById("status").textContent = `${SA.time(d.time)}${d.age_s > 10 ? ` (${Math.round(d.age_s)} s old)` : ""}`;
+  const t = d.targets || {};
+  const upwind = d.twa != null && Math.abs(d.twa) < 90;
+  const tgtTwa = upwind ? t.up_twa : t.down_twa, tgtBsp = upwind ? t.up_bsp : t.down_bsp;
+  document.getElementById("grid").innerHTML = [
+    tile("BSP", SA.f(d.bsp, 2), "kn"),
+    tile("Target BSP", SA.f(d.target_bsp, 2), "kn"),
+    tile("Polar", SA.f(d.polar_pct, 0), "%", SA.pctClass(d.polar_pct)),
+    tile("VMG", SA.f(d.vmg != null ? Math.abs(d.vmg) : null, 2), `/ ${SA.f(d.target_vmg, 2)} kn`),
+    tile("TWA", SA.f(d.twa, 0), `° tgt ${SA.f(tgtTwa, 0)}°`),
+    tile(upwind ? "Beat target" : "Run target", SA.f(tgtBsp, 2), `kn @ ${SA.f(tgtTwa, 0)}°`),
+    tile("TWS", SA.f(d.tws, 1), "kn"),
+    tile("TWD", SA.f(d.twd, 0), "°"),
+    tile("SOG / COG", SA.f(d.sog, 1), `kn ${SA.f(d.cog, 0)}°`),
+    tile("Heel", SA.f(d.heel != null ? Math.abs(d.heel) : null, 0), "°"),
+  ].join("");
+  const li = document.getElementById("lineInfo");
+  li.innerHTML = d.line ? `<span>Distance to line <b>${SA.f(d.line.distance_m, 0)} m</b></span>
+    <span>Position <b>${SA.f(d.line.along_pct, 0)} %</b> from pin</span><span>Line <b>${SA.f(d.line.length_m, 0)} m</b></span>` : "";
+  const lm = document.getElementById("lastMan");
+  if (d.last_maneuver) {
+    const m = d.last_maneuver;
+    lm.style.display = "block";
+    lm.innerHTML = `<h2>Last ${m.kind} (${SA.time(m.time)})</h2><div class="readout">
+      <span>Loss <b>${SA.f(m.loss_m, 0)} m</b></span><span>Min BSP <b>${SA.f(m.min_bsp, 1)}</b> kn</span>
+      <span>Recovery <b>${m.recover_s ?? "–"}</b> s</span><span>Exit TWA <b>${SA.f(m.exit_twa, 0)}°</b></span></div>`;
+  }
+}
+async function loadPings() {
+  const p = await SA.api("/api/pings");
+  document.getElementById("pings").innerHTML = `<thead><tr><th class="l">Time</th><th class="l">End</th><th>Lat</th><th>Lon</th></tr></thead><tbody>` +
+    (p.slice(0, 6).map((x) => `<tr><td class="l">${SA.dateTime(x.time)}</td><td class="l">${x.end_name}</td><td>${x.lat.toFixed(5)}</td><td>${x.lon.toFixed(5)}</td></tr>`).join("") ||
+     `<tr><td colspan="4" class="empty">No pings yet</td></tr>`) + "</tbody>";
+}
+async function ping(end) {
+  try { const r = await SA.api("/api/ping/" + end, { json: {} }); SA.toast(`${end === "pin" ? "Pin" : "Committee boat"} pinged at ${r.lat.toFixed(5)}, ${r.lon.toFixed(5)}`); loadPings(); tick(); }
+  catch (e) { SA.toast(e.message, 4000); }
+}
+document.getElementById("pingPin").onclick = () => ping("pin");
+document.getElementById("pingBoat").onclick = () => ping("boat");
+tick(); loadPings(); setInterval(tick, 1000);
+</script>
+{% endblock %}

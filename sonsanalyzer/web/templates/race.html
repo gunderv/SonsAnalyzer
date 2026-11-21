@@ -1,0 +1,124 @@
+{% extends "base.html" %}
+{% block title %}{{ race.name }}{% endblock %}
+{% block head %}
+<link rel="stylesheet" href="/static/vendor/leaflet.min.css">
+<link rel="stylesheet" href="/static/vendor/uPlot.min.css">
+{% endblock %}
+{% block content %}
+<div class="row" style="justify-content:space-between;margin-bottom:.75rem">
+  <div>
+    <h1 id="title">{{ race.name }}</h1>
+    <div class="muted" id="subtitle"></div>
+  </div>
+  <a href="/">← All races</a>
+</div>
+
+<div id="loading" class="panel empty">Analysing race…</div>
+<div id="error" class="panel empty" style="display:none"></div>
+
+<div id="content" style="display:none">
+  <div class="tiles" id="tiles" style="margin-bottom:1rem"></div>
+
+  <div class="panel">
+    <div class="row" style="justify-content:space-between;margin-bottom:.5rem">
+      <div class="legend" id="legend"></div>
+      <label style="flex-direction:row;align-items:center;gap:.4rem">Colour track by
+        <select id="colorBy">
+          <option value="polar_pct">Polar %</option>
+          <option value="vmg_pct">VMG %</option>
+          <option value="bsp">Boatspeed</option>
+          <option value="tws">True wind speed</option>
+          <option value="mode">Leg type</option>
+        </select>
+      </label>
+    </div>
+    <div id="map"></div>
+    <div class="replay">
+      <button id="play" title="Play / pause (space)">▶</button>
+      <select id="speed" title="Replay speed">
+        <option value="5">5×</option><option value="10" selected>10×</option><option value="30">30×</option><option value="60">60×</option>
+      </select>
+      <input type="range" id="slider" min="0" max="0" value="0">
+      <span id="clock" class="num" style="min-width:6.5em"></span>
+    </div>
+    <div class="readout" id="readout"></div>
+  </div>
+
+  <div class="panel">
+    <div class="row" style="justify-content:space-between;margin-bottom:.4rem">
+      <h2 style="margin:0">Instruments</h2>
+      <label style="flex-direction:row;align-items:center;gap:.4rem">Chart
+        <select id="chartSel">
+          <option value="speed">Boatspeed vs target</option>
+          <option value="pct">Polar % and VMG %</option>
+          <option value="wind">True wind speed and direction</option>
+          <option value="angle">TWA vs target</option>
+          <option value="heel">Heel and rudder</option>
+        </select>
+      </label>
+    </div>
+    <div id="chart"></div>
+    <div class="muted" style="font-size:.8rem">Drag on the chart to zoom, double-click to reset. Hover to move the boat on the map.</div>
+  </div>
+
+  <div class="panel">
+    <div class="tabs" id="tabs">
+      <button data-tab="legs" class="active">Legs</button>
+      <button data-tab="maneuvers">Tacks & gybes</button>
+      <button data-tab="bands">Wind bands</button>
+      <button data-tab="start">Start</button>
+      <button data-tab="settings">Race settings</button>
+    </div>
+    <div class="tab active" id="tab-legs"><div class="table-wrap"><table id="legsTable"></table></div></div>
+    <div class="tab" id="tab-maneuvers">
+      <div class="grid2" style="margin-bottom:1rem">
+        <div><h2>Averages</h2><div class="table-wrap"><table id="manSummary"></table></div></div>
+        <div><h2>By wind band</h2><div class="table-wrap"><table id="manBands"></table></div></div>
+      </div>
+      <div class="row" style="margin-bottom:.5rem">
+        <label style="flex-direction:row;align-items:center;gap:.4rem">Show
+          <select id="manFilter"><option value="all">All</option><option value="tack">Tacks</option><option value="gybe">Gybes</option></select></label>
+        <label style="flex-direction:row;align-items:center;gap:.4rem"><input type="checkbox" id="showPre"> include pre-start</label>
+        <span class="muted" style="font-size:.85rem">Click a row to replay it. Click a column header to sort.</span>
+      </div>
+      <div class="table-wrap"><table id="manTable"></table></div>
+      <p class="muted" style="font-size:.82rem">Loss = metres lost along the wind axis over 10 s before to 30 s after the turn,
+        compared with keeping the pre-turn VMG (GPS based, so current largely cancels). Recovery = seconds until VMG is back to 90 % of entry VMG.</p>
+    </div>
+    <div class="tab" id="tab-bands">
+      <p class="muted" style="margin-top:0">Average performance per wind band and point of sail (racing time only, bands with at least 30 s).</p>
+      <div class="table-wrap"><table id="bandsTable"></table></div>
+    </div>
+    <div class="tab" id="tab-start"><div id="startBox"></div></div>
+    <div class="tab" id="tab-settings">
+      <form id="editRace">
+        <div class="row"><label>Name<input name="name" required></label></div>
+        <div class="row">
+          <label>From<input type="datetime-local" step="1" name="start_time" required></label>
+          <label>To<input type="datetime-local" step="1" name="end_time" required></label>
+          <label>Start gun<input type="datetime-local" step="1" name="gun_time"></label>
+        </div>
+        <p class="muted" style="font-size:.85rem">Start line override. Leave empty to use the pin/boat pings from the Live page
+          (most recent before the gun), or a start line published by the instruments.</p>
+        <div class="row">
+          <label>Pin end latitude<input name="pin_lat" inputmode="decimal"></label>
+          <label>Pin end longitude<input name="pin_lon" inputmode="decimal"></label>
+          <label>Committee boat latitude<input name="boat_lat" inputmode="decimal"></label>
+          <label>Committee boat longitude<input name="boat_lon" inputmode="decimal"></label>
+        </div>
+        <div class="row"><label>Notes<textarea name="notes" rows="3"></textarea></label></div>
+        <div class="row" style="margin-top:.8rem">
+          <button class="primary" type="submit">Save and re-analyse</button>
+          <button class="danger" type="button" id="deleteRace">Delete race</button>
+        </div>
+      </form>
+    </div>
+  </div>
+</div>
+{% endblock %}
+{% block scripts %}
+<script>const RACE_ID = {{ race.id }};</script>
+<script src="/static/vendor/leaflet.min.js"></script>
+<script src="/static/vendor/uPlot.iife.min.js"></script>
+<script src="/static/race.js"></script>
+{% endblock %}

@@ -1,0 +1,116 @@
+{% extends "base.html" %}
+{% block title %}Polar{% endblock %}
+{% block content %}
+<div class="panel">
+  <div class="row" style="justify-content:space-between">
+    <div>
+      <h1>Polar</h1>
+      <div class="muted" id="meta">Loading…</div>
+    </div>
+    <div class="row">
+      <button class="primary" id="fetchBtn">Fetch from ORC</button>
+      <label class="btn" style="flex-direction:row;cursor:pointer;color:var(--ink)">Upload CSV…
+        <input type="file" id="csv" accept=".csv,.txt,.pol" style="display:none"></label>
+    </div>
+  </div>
+  <p class="muted" style="font-size:.85rem;margin-bottom:0">Fetching needs internet, so do it on shore. The polar is then stored on the Pi.
+    CSV format: first row <code>twa/tws;6;8;10…</code>, then one row per TWA with boatspeeds (comma, semicolon or tab separated).</p>
+</div>
+
+<div id="body" style="display:none">
+  <div class="grid2">
+    <div class="panel">
+      <h2>Polar diagram</h2>
+      <canvas id="diagram" style="width:100%;max-width:560px;aspect-ratio:1/1.15;display:block;margin:auto"></canvas>
+      <div class="legend" id="plegend" style="justify-content:center;margin-top:.5rem"></div>
+    </div>
+    <div class="panel">
+      <h2>Targets</h2>
+      <div class="table-wrap"><table id="targets"></table></div>
+      <h2 style="margin-top:1.2rem">Boatspeed (kn)</h2>
+      <div class="table-wrap"><table id="table"></table></div>
+    </div>
+  </div>
+</div>
+<div id="none" class="panel empty" style="display:none">No polar loaded yet. Use <b>Fetch from ORC</b> (with internet) or upload a CSV.</div>
+{% endblock %}
+{% block scripts %}
+<script>
+const COLORS = ["#3b4cc0", "#4a7bd8", "#5aa5df", "#59c1b9", "#7cc35a", "#e9c22b", "#f09a45", "#d6452c", "#a3243b", "#6d1a4a"];
+let P = null;
+async function load() {
+  const d = await SA.api("/api/polar");
+  P = d.polar;
+  document.getElementById("body").style.display = P ? "block" : "none";
+  document.getElementById("none").style.display = P ? "none" : "block";
+  if (!P) { document.getElementById("meta").textContent = "No polar loaded"; return; }
+  const m = P.meta || {};
+  document.getElementById("meta").textContent = m.source === "ORC"
+    ? `ORC ${m.CertName || ""} certificate · ${m.YachtName || ""} ${m.SailNo || ""} · ${m.Class || ""} · RefNo ${m.RefNo || ""}${m.Expiry ? " · valid to " + m.Expiry.slice(0, 10) : ""}`
+    : `From ${m.name || "CSV"}`;
+  const t = P.table;
+  const head = `<thead><tr><th class="l">TWS</th>${t.tws.map((w) => `<th>${w}</th>`).join("")}</tr></thead>`;
+  const tr = (label, arr, d = 1) => `<tr><td class="l">${label}</td>${arr.map((v) => `<td>${SA.f(v, d)}</td>`).join("")}</tr>`;
+  document.getElementById("targets").innerHTML = head + "<tbody>" +
+    tr("Beat angle °", t.targets.up_twa, 1) + tr("Beat VMG", t.targets.up_vmg, 2) + tr("Beat BSP", t.targets.up_bsp, 2) +
+    tr("Gybe angle °", t.targets.down_twa, 1) + tr("Run VMG", t.targets.down_vmg, 2) + tr("Run BSP", t.targets.down_bsp, 2) + "</tbody>";
+  document.getElementById("table").innerHTML = `<thead><tr><th class="l">TWA \\ TWS</th>${t.tws.map((w) => `<th>${w}</th>`).join("")}</tr></thead><tbody>` +
+    t.rows.map((r) => tr(r.twa + "°", r.bsp, 2)).join("") + "</tbody>";
+  draw();
+}
+function draw() {
+  const c = document.getElementById("diagram");
+  const dpr = window.devicePixelRatio || 1;
+  const W = c.clientWidth, H = c.clientHeight;
+  c.width = W * dpr; c.height = H * dpr;
+  const g = c.getContext("2d"); g.scale(dpr, dpr);
+  const ink = SA.css("--muted"), line = SA.css("--line");
+  const cx = W * 0.12, cy = H * 0.5;
+  const maxV = Math.ceil(Math.max(...Object.values(P.curves).flat()) / 2) * 2;
+  const R = Math.min(W * 0.84, H * 0.47);
+  const sc = R / maxV;
+  g.font = "11px system-ui"; g.fillStyle = ink; g.strokeStyle = line; g.lineWidth = 1;
+  for (let v = 2; v <= maxV; v += 2) {
+    g.beginPath(); g.arc(cx, cy, v * sc, -Math.PI / 2, Math.PI / 2); g.stroke();
+    g.fillText(v + " kn", cx + 3, cy - v * sc - 2);
+  }
+  for (let a = 0; a <= 180; a += 15) {
+    const r = a * Math.PI / 180;
+    g.beginPath(); g.moveTo(cx, cy); g.lineTo(cx + Math.sin(r) * R, cy - Math.cos(r) * R); g.stroke();
+    if (a % 30 === 0 && a > 0 && a < 180) g.fillText(a + "°", cx + Math.sin(r) * (R + 4), cy - Math.cos(r) * (R + 4) + 4);
+  }
+  const keys = Object.keys(P.curves);
+  keys.forEach((k, i) => {
+    g.strokeStyle = COLORS[i % COLORS.length]; g.lineWidth = 2; g.beginPath();
+    P.curves[k].forEach((v, j) => {
+      const r = P.curve_twa[j] * Math.PI / 180;
+      const x = cx + Math.sin(r) * v * sc, y = cy - Math.cos(r) * v * sc;
+      j ? g.lineTo(x, y) : g.moveTo(x, y);
+    });
+    g.stroke();
+    // targets
+    const t = P.table.targets;
+    [[t.up_twa[i], t.up_bsp[i]], [t.down_twa[i], t.down_bsp[i]]].forEach(([a, v]) => {
+      const r = a * Math.PI / 180;
+      g.fillStyle = COLORS[i % COLORS.length]; g.beginPath();
+      g.arc(cx + Math.sin(r) * v * sc, cy - Math.cos(r) * v * sc, 3.5, 0, 2 * Math.PI); g.fill();
+    });
+  });
+  document.getElementById("plegend").innerHTML = keys.map((k, i) => `<span class="sw" style="background:${COLORS[i % COLORS.length]}"></span>${parseFloat(k)} kn`).join(" ") +
+    `&nbsp;· dots = beat / run targets`;
+}
+window.addEventListener("resize", () => P && draw());
+document.getElementById("fetchBtn").onclick = async (e) => {
+  e.target.disabled = true; e.target.textContent = "Fetching…";
+  try { const r = await SA.api("/api/polar/fetch", { json: {} }); SA.toast("Polar loaded: " + (r.meta.YachtName || "")); await load(); }
+  catch (err) { SA.toast(err.message, 5000); }
+  e.target.disabled = false; e.target.textContent = "Fetch from ORC";
+};
+document.getElementById("csv").onchange = async (e) => {
+  const fd = new FormData(); fd.append("file", e.target.files[0]);
+  try { await SA.api("/api/polar/upload", { method: "POST", body: fd }); SA.toast("Polar uploaded"); await load(); }
+  catch (err) { SA.toast(err.message, 5000); }
+};
+load();
+</script>
+{% endblock %}

@@ -1,0 +1,100 @@
+{% extends "base.html" %}
+{% block title %}Races{% endblock %}
+{% block content %}
+{% if not has_polar %}
+<div class="panel"><b>No polar loaded.</b> <span class="muted">Polar %, targets and VMG % need the ORC polar.</span>
+  <a href="/polar">Load it on the Polar page →</a></div>
+{% endif %}
+
+<div class="panel">
+  <h2>Races</h2>
+  <div class="table-wrap">
+    <table id="races">
+      <thead><tr><th class="l">Race</th><th class="l">Date</th><th>Duration</th><th class="l">Start</th><th></th></tr></thead>
+      <tbody><tr><td colspan="5" class="empty">Loading…</td></tr></tbody>
+    </table>
+  </div>
+</div>
+
+<div class="grid2">
+  <div class="panel">
+    <h2>Sailing sessions <span class="muted" style="font-weight:400">(found automatically from the log)</span></h2>
+    <div class="row" style="margin-bottom:.5rem">
+      <label style="flex-direction:row;align-items:center;gap:.4rem">Last
+        <select id="days"><option>7</option><option selected>30</option><option>90</option><option>365</option></select> days</label>
+    </div>
+    <div class="table-wrap">
+      <table id="sessions">
+        <thead><tr><th class="l">Start</th><th>Length</th><th>Avg SOG</th><th>Max SOG</th><th></th></tr></thead>
+        <tbody><tr><td colspan="5" class="empty">Loading…</td></tr></tbody>
+      </table>
+    </div>
+  </div>
+
+  <div class="panel">
+    <h2>New race</h2>
+    <form id="newrace">
+      <div class="row">
+        <label>Name<input name="name" required placeholder="e.g. Færderseilasen race 2"></label>
+      </div>
+      <div class="row">
+        <label>From<input type="datetime-local" step="1" name="start_time" required></label>
+        <label>To<input type="datetime-local" step="1" name="end_time" required></label>
+      </div>
+      <div class="row">
+        <label>Start gun (optional)<input type="datetime-local" step="1" name="gun_time"></label>
+      </div>
+      <p class="muted" style="font-size:.85rem;margin:.3rem 0 .8rem">Times are local. The start line comes from the
+        pin/boat pings on the Live page, or can be entered on the race page afterwards.</p>
+      <button class="primary" type="submit">Create race</button>
+    </form>
+  </div>
+</div>
+{% endblock %}
+{% block scripts %}
+<script>
+async function loadRaces() {
+  const races = await SA.api("/api/races");
+  const tb = document.querySelector("#races tbody");
+  if (!races.length) { tb.innerHTML = `<tr><td colspan="5" class="empty">No races yet. Create one from a session or the form below.</td></tr>`; return; }
+  tb.innerHTML = races.map(r => `
+    <tr class="clickable" onclick="location.href='/race/${r.id}'">
+      <td class="l"><a href="/race/${r.id}"><b>${SA.esc(r.name)}</b></a></td>
+      <td class="l">${SA.dateTime(r.start_time)}</td>
+      <td>${SA.dur((new Date(r.end_time) - new Date(r.start_time)) / 1000)}</td>
+      <td class="l">${r.gun_time ? "Gun " + SA.time(r.gun_time) : '<span class="muted">no gun time</span>'}</td>
+      <td><a href="/race/${r.id}">Analyse →</a></td>
+    </tr>`).join("");
+}
+async function loadSessions() {
+  const tb = document.querySelector("#sessions tbody");
+  tb.innerHTML = `<tr><td colspan="5" class="empty">Loading…</td></tr>`;
+  try {
+    const s = await SA.api("/api/sessions?days=" + document.getElementById("days").value);
+    if (!s.length) { tb.innerHTML = `<tr><td colspan="5" class="empty">No sailing found in this period.</td></tr>`; return; }
+    tb.innerHTML = s.map((x, i) => `
+      <tr><td class="l">${SA.dateTime(x.start)}</td><td>${SA.dur(x.minutes * 60)}</td>
+      <td>${SA.f(x.avg_sog, 1)} kn</td><td>${SA.f(x.max_sog, 1)} kn</td>
+      <td><button data-i="${i}">Use</button></td></tr>`).join("");
+    tb.querySelectorAll("button").forEach(b => b.onclick = () => {
+      const x = s[b.dataset.i], f = document.getElementById("newrace");
+      f.start_time.value = SA.toLocalInput(x.start);
+      f.end_time.value = SA.toLocalInput(x.end);
+      f.name.focus();
+    });
+  } catch (e) { tb.innerHTML = `<tr><td colspan="5" class="empty">Could not read the log: ${SA.esc(e.message)}</td></tr>`; }
+}
+document.getElementById("days").onchange = loadSessions;
+document.getElementById("newrace").onsubmit = async (ev) => {
+  ev.preventDefault();
+  const f = ev.target;
+  try {
+    const r = await SA.api("/api/races", { json: {
+      name: f.name.value, start_time: SA.fromLocalInput(f.start_time.value),
+      end_time: SA.fromLocalInput(f.end_time.value), gun_time: SA.fromLocalInput(f.gun_time.value) } });
+    location.href = "/race/" + r.id;
+  } catch (e) { SA.toast(e.message); }
+};
+loadRaces(); loadSessions();
+</script>
+{% endblock %}
